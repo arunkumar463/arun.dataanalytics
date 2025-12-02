@@ -1,0 +1,176 @@
+A.HOTEL MANAGEMENT SYSTEM QUERIES
+-------------------------------
+Q1. User_id and last booked room_no for every user.
+
+SELECT u.user_id, MAX(b.room_no) as last_booked_room_no
+FROM users u
+LEFT JOIN bookings b ON u.user_id = b.user_id
+GROUP BY u.user_id;
+--------------------------------------------------------------------------------------------------------------------------------------------
+Q2. Booking_id and total billing amount for November 2021 bookings
+SELECT bc.booking_id, SUM(i.item_rate * bc.item_quantity) as total_billing
+FROM booking_commercials bc
+JOIN items i ON bc.item_id = i.item_id
+WHERE YEAR(bc.bill_date) = 2021 AND MONTH(bc.bill_date) = 11
+GROUP BY bc.booking_id;
+-----------------------------------------------------------------------------------------------------------------------------------------------
+Q3. Bill_id and bill amount for October 2021 bills > 1000
+SELECT bc.bill_id, SUM(i.item_rate * bc.item_quantity) as bill_amount
+FROM booking_commercials bc
+JOIN items i ON bc.item_id = i.item_id
+WHERE YEAR(bc.bill_date) = 2021 AND MONTH(bc.bill_date) = 10
+GROUP BY bc.bill_id
+HAVING SUM(i.item_rate * bc.item_quantity) > 1000;
+---------------------------------------------------------------------------------------------------------------------------------------------
+Q4. Most and least ordered item per month in 2021
+WITH monthly_items AS (
+    SELECT YEAR(bill_date) as yr, MONTH(bill_date) as mon, item_id, 
+           SUM(item_quantity) as total_qty,
+           ROW_NUMBER() OVER (PARTITION BY YEAR(bill_date), MONTH(bill_date) 
+                             ORDER BY SUM(item_quantity) DESC) as rn_desc,
+           ROW_NUMBER() OVER (PARTITION BY YEAR(bill_date), MONTH(bill_date) 
+                             ORDER BY SUM(item_quantity) ASC) as rn_asc
+    FROM booking_commercials
+    WHERE YEAR(bill_date) = 2021
+    GROUP BY YEAR(bill_date), MONTH(bill_date), item_id
+)
+SELECT yr, mon, 
+       MAX(CASE WHEN rn_desc = 1 THEN item_id END) as most_ordered,
+       MAX(CASE WHEN rn_asc = 1 THEN item_id END) as least_ordered
+FROM monthly_items
+GROUP BY yr, mon;
+----------------------------------------------------------------------------------------------------------------------------------------------
+Q5. Customers with second highest bill value per month in 2021
+WITH monthly_bills AS (
+    SELECT u.user_id, YEAR(bc.bill_date) as yr, MONTH(bc.bill_date) as mon,
+           SUM(i.item_rate * bc.item_quantity) as bill_amount,
+           ROW_NUMBER() OVER (PARTITION BY YEAR(bc.bill_date), MONTH(bc.bill_date), u.user_id 
+                             ORDER BY SUM(i.item_rate * bc.item_quantity) DESC) as bill_rank
+    FROM booking_commercials bc
+    JOIN items i ON bc.item_id = i.item_id
+    JOIN bookings b ON bc.booking_id = b.booking_id
+    JOIN users u ON b.user_id = u.user_id
+    WHERE YEAR(bc.bill_date) = 2021
+    GROUP BY u.user_id, YEAR(bc.bill_date), MONTH(bc.bill_date)
+)
+SELECT user_id, yr, mon, bill_amount
+FROM monthly_bills
+WHERE bill_rank = 2;
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+B.CLINIC MANAGEMENT SYSTEM QUERIES
+Q1. Revenue from each sales channel in given year (e.g., 2021)
+SELECT sales_channel, SUM(amount) as total_revenue
+FROM clinic_sales
+WHERE YEAR(datetime) = 2021
+GROUP BY sales_channel; [web:21]
+
+Q2. Top 10 most valuable customers for given year
+SELECT cs.uid, SUM(cs.amount) as total_spent
+FROM clinic_sales cs
+WHERE YEAR(cs.datetime) = 2021
+GROUP BY cs.uid
+ORDER BY total_spent DESC
+LIMIT 10; [web:26]
+
+Q3. Month-wise revenue, expense, profit, status for given year
+WITH yearly_metrics AS (
+    SELECT YEAR(cs.datetime) as yr, MONTH(cs.datetime) as mon,
+           COALESCE(SUM(cs.amount), 0) as revenue,
+           COALESCE(SUM(e.amount), 0) as expense
+    FROM clinic_sales cs
+    FULL OUTER JOIN expenses e ON DATE_TRUNC('month', cs.datetime) = DATE_TRUNC('month', e.datetime)
+    WHERE YEAR(cs.datetime) = 2021 OR YEAR(e.datetime) = 2021
+    GROUP BY yr, mon
+)
+SELECT mon,
+       revenue,
+       expense,
+       revenue - expense as profit,
+       CASE WHEN revenue > expense THEN 'profitable' ELSE 'not-profitable' END as status
+FROM yearly_metrics
+ORDER BY mon;
+---------------------------------------------------------------------------------------------------------------------------
+
+Q4. Most profitable clinic per city for given month (e.g., 2021-09)
+WITH clinic_profit AS (
+    SELECT c.city, cs.cid,
+           COALESCE(SUM(cs.amount), 0) - COALESCE(SUM(e.amount), 0) as profit
+    FROM clinics c
+    LEFT JOIN clinic_sales cs ON c.cid = cs.cid 
+        AND MONTH(cs.datetime) = 9 AND YEAR(cs.datetime) = 2021
+    LEFT JOIN expenses e ON c.cid = e.cid 
+        AND MONTH(e.datetime) = 9 AND YEAR(e.datetime) = 2021
+    GROUP BY c.city, cs.cid
+)
+SELECT city, cid, profit
+FROM (
+    SELECT city, cid, profit,
+           ROW_NUMBER() OVER (PARTITION BY city ORDER BY profit DESC) as rn
+    FROM clinic_profit
+) ranked
+WHERE rn = 1; 
+---------------------------------------------------------------------------------------------------------------------------------
+
+Q5. Second least profitable clinic per state for given month
+WITH clinic_profit AS (
+    SELECT c.state, cs.cid,
+           COALESCE(SUM(cs.amount), 0) - COALESCE(SUM(e.amount), 0) as profit
+    FROM clinics c
+    LEFT JOIN clinic_sales cs ON c.cid = cs.cid 
+        AND MONTH(cs.datetime) = 9 AND YEAR(cs.datetime) = 2021
+    LEFT JOIN expenses e ON c.cid = e.cid 
+        AND MONTH(e.datetime) = 9 AND YEAR(e.datetime) = 2021
+    GROUP BY c.state, cs.cid
+)
+SELECT state, cid, profit
+FROM (
+    SELECT state, cid, profit,
+           ROW_NUMBER() OVER (PARTITION BY state ORDER BY profit ASC) as rn
+    FROM clinic_profit
+) ranked
+WHERE rn = 2;
+
+SPREADSHEET PROFICIENCY
+----------------------------------------------------------------------------------------------------------------------------------------------
+1. Populate 'ticket_created_at' in feedbacks using VLOOKUP:
+In the feedbacks sheet, use: =VLOOKUP(C2, ticket!E:E, 1, FALSE) where C2 is cms_id cell and ticket!E:E is cms_id column in ticket sheet. This pulls created_at value matching cms_id. Lock range with $ for drag-fill: =VLOOKUP(C2, ticket!$E$2:$F$1000, 2, FALSE).​
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+2. Outlet-wise count of same-day/same-hour tickets:
+
+Create pivot table from ticket data, group by outlet_id.
+
+For same-day: Add calculated field =IF(INT(created_at)=INT(closed_at),1,0) then sum.
+
+For same-hour: =IF(HOUR(created_at)=HOUR(closed_at) AND INT(created_at)=INT(closed_at),1,0). Use COUNTIFS: =COUNTIFS(outlet_range, outlet_cell, date_created_range, date_closed_range).
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                      PYTHON PROFICIENCY
+1. Minutes to human readable:
+-----------------------------------------
+def minutes_to_human(minutes):
+    hrs = minutes // 60
+    mins = minutes % 60
+    hr_str = "hr" if hrs == 1 else "hrs"
+    min_str = "minute" if mins == 1 else "minutes"
+    return f"{hrs} {hr_str} {mins} {min_str}" if hrs else f"{mins} {min_str}"
+
+print(minutes_to_human(130))  
+print(minutes_to_human(110))  
+
+-----------------------------------------------------------------------------------------------------------
+
+2. Remove duplicates using loop:
+------------------------------------
+def remove_duplicates(s):
+    seen = set()
+    result = ""
+    for char in s:
+        if char not in seen:
+            seen.add(char)
+            result += char
+    return result
+
+print(remove_duplicates("Leetcode")) 
+---------------------------------------------
+
